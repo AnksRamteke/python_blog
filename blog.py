@@ -3,6 +3,8 @@ import re
 import random
 import hashlib
 import hmac
+import logging
+import json
 from string import letters
 
 import webapp2
@@ -28,6 +30,10 @@ def check_secure_val(secure_val):
     if secure_val == make_secure_val(val):
         return val
 
+def render_post(response, post):
+    response.out.write('<b>' + post.subject + '</b><br>')
+    response.out.write(post.content)
+
 class BlogHandler(webapp2.RequestHandler):
     def write(self, *a, **kw):
         self.response.out.write(*a, **kw)
@@ -38,6 +44,11 @@ class BlogHandler(webapp2.RequestHandler):
 
     def render(self, template, **kw):
         self.write(self.render_str(template, **kw))
+
+    def render_json(self, d):
+        json_txt = json.dumps(d)
+        self.response.headers['Content-Type'] = 'application/json; charset=UTF-8'
+        self.write(json_txt)
 
     def set_secure_cookie(self, name, val):
         cookie_val = make_secure_val(val)
@@ -60,9 +71,11 @@ class BlogHandler(webapp2.RequestHandler):
         uid = self.read_secure_cookie('user_id')
         self.user = uid and User.by_id(int(uid))
 
-def render_post(response, post):
-    response.out.write('<b>' + post.subject + '</b><br>')
-    response.out.write(post.content)
+        if self.request.url.endswith('.json'):
+            self.format = 'json'
+        else:
+            self.format = 'html'
+
 
 class MainPage(BlogHandler):
   def get(self):
@@ -130,10 +143,21 @@ class Post(db.Model):
         self._render_text = self.content.replace('\n', '<br>')
         return render_str("post.html", p = self)
 
+    def as_dict(self):
+        time_fmt = '%c'
+        d = {'subject': self.subject,
+             'content': self.content,
+             'created': self.created.strftime(time_fmt),
+             'last_modified': self.last_modified.strftime(time_fmt)}
+        return d
+
 class BlogFront(BlogHandler):
     def get(self):
         posts = greetings = Post.all().order('-created')
-        self.render('front.html', posts = posts)
+        if self.format == 'html':
+            self.render('front.html', posts = posts)
+        else:
+            return self.render_json([p.as_dict() for p in posts])
 
 class PostPage(BlogHandler):
     def get(self, post_id):
@@ -143,8 +167,10 @@ class PostPage(BlogHandler):
         if not post:
             self.error(404)
             return
-
-        self.render("permalink.html", post = post)
+        if self.format == 'html':
+            self.render("permalink.html", post = post)
+        else:
+            self.render_json(post.as_dict())
 
 class NewPost(BlogHandler):
     def get(self):
@@ -290,8 +316,8 @@ app = webapp2.WSGIApplication([('/', MainPage),
                                ('/unit2/rot13', Rot13),
                                ('/unit2/signup', Unit2Signup),
                                ('/unit2/welcome', Welcome),
-                               ('/blog/?', BlogFront),
-                               ('/blog/([0-9]+)', PostPage),
+                               ('/blog/?(?:\.json)?', BlogFront),
+                               ('/blog/([0-9]+)(?:\.json)?', PostPage),
                                ('/blog/newpost', NewPost),
                                ('/signup', Register),
                                ('/login', Login),
